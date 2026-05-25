@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import random
 from buffer import ReplayBuffer
 from models.q_model import QModel
+from models.world_model import WorldModel
 import datetime
 from torch.utils.tensorboard.writer import SummaryWriter
 
@@ -35,6 +36,8 @@ class Agent:
             input_device=self.device,
             output_device=self.device
         )
+
+        self.world_model = WorldModel(observation_shape=obs.shape, embed_dim=1024, n_actions=self.env.action_space.n).to(self.device) 
 
         print(f"Initializing agent on device {self.device}")
 

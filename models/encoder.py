@@ -8,9 +8,11 @@ class Encoder(BaseModel):
     def __init__(self, observation_shape=(), embed_dim=1024):
         super().__init__()
         
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
+        self.conv_channels = [3, 32, 64, 128]
+
+        self.conv1 = nn.Conv2d(self.conv_channels[0], self.conv_channels[1], kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(self.conv_channels[1], self.conv_channels[2], kernel_size=3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(self.conv_channels[2], self.conv_channels[3], kernel_size=3, stride=2, padding=1)
 
         self.flatten = torch.nn.Flatten()
 
@@ -25,12 +27,22 @@ class Encoder(BaseModel):
 
         print(f"Encoder initialized. Input shape {observation_shape}")
 
+
+    def get_output_shape(self):
+        return self.conv_output_shape
+
+    def get_conv_channels(self):
+        return self.conv_channels
         
     def _conv_features(self, x):
+
+        if x.dtype == torch.uint8:
+            x = x.float() / 255.0
+
         x = F.elu(self.conv1(x))
         x = F.elu(self.conv2(x))
         x = F.elu(self.conv3(x))
-        return x.flatten(1)
+        return x
 
     def _conv_forward(self, x):
         x = self._conv_features(x)
@@ -45,7 +57,7 @@ class Encoder(BaseModel):
 
 class Decoder(BaseModel):
 
-    def __init__(self, embed_dim=1024, conv_output_shape=(128, 12, 12)):
+    def __init__(self, embed_dim=1024, conv_output_shape=(128, 12, 12), conv_channels=[3, 32, 64, 128]):
         super().__init__()
 
         self.conv_output_shape=conv_output_shape
@@ -54,9 +66,9 @@ class Decoder(BaseModel):
 
         self.fc_dec = nn.Linear(embed_dim, conv_flat_size)
 
-        self.deconv1 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1)
-        self.deconv2 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1)
-        self.deconv3 = nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1)
+        self.deconv1 = nn.ConvTranspose2d(conv_channels[3], conv_channels[2], kernel_size=3, stride=2, padding=1)
+        self.deconv2 = nn.ConvTranspose2d(conv_channels[2], conv_channels[1], kernel_size=3, stride=2, padding=1)
+        self.deconv3 = nn.ConvTranspose2d(conv_channels[1], conv_channels[0], kernel_size=3, stride=2, padding=1)
 
     def _deconv_forward(self, x):
 
