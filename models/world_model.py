@@ -6,6 +6,15 @@ from models.encoder import Encoder, Decoder
 from models.dynamics_model import DynamicsModel
 from models.ssim_loss import ssim_loss
 
+def gradient_loss(pred, target):
+    pred_dx =  pred[:, :, :, 1:] - pred[:, :, :, :-1]
+    target_dx =  target[:, :, :, 1:] - target[:, :, :, :-1]
+    
+    pred_dy =  pred[:, :, 1:, :] - pred[:, :, :-1, :]
+    target_dy =  target[:, :, 1:, :] - target[:, :, :-1, :]
+
+    return F.l1_loss(pred_dx, target_dx) + F.l1_loss(pred_dy, target_dy)
+
 class WorldModel(BaseModel):
 
     def __init__(self, observation_shape=(), embed_dim=1024, n_actions=4, feature_dim=None):
@@ -15,6 +24,8 @@ class WorldModel(BaseModel):
             feature_dim = embed_dim
 
         self.encoder = Encoder(observation_shape=observation_shape, embed_dim=embed_dim)
+
+        print(f"Encoder output shape: {self.encoder.get_output_shape()}")
         self.decoder = Decoder(embed_dim=embed_dim,
                                conv_output_shape=self.encoder.get_output_shape(),
                                conv_channels=self.encoder.get_conv_channels())

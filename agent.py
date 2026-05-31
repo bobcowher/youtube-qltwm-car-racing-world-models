@@ -1,10 +1,12 @@
 import os
+from re import T
 import gymnasium as gym
 import cv2
 import torch
 import torch.nn.functional as F
 import random
 from buffer import ReplayBuffer
+from models import world_model
 from models.q_model import QModel
 from models.world_model import WorldModel
 import datetime
@@ -14,7 +16,8 @@ class Agent:
 
     def __init__(self, env: gym.Env,
                        max_buffer_size: int = 20000,
-                       target_update_interval: int = 10000) -> None:
+                       target_update_interval: int = 10000,
+                       world_model_batch_size: int = 8) -> None:
         self.env = env
         self.epsilon = 1
         self.min_epsilon = 0.1
@@ -38,6 +41,9 @@ class Agent:
         )
 
         self.world_model = WorldModel(observation_shape=obs.shape, embed_dim=1024, n_actions=self.env.action_space.n).to(self.device) 
+
+        self.world_model_optimizer = torch.optim.Adam(self.world_model.parameters(), lr=0.0001)
+        self.world_model_batch_size = world_model_batch_size 
 
         print(f"Initializing agent on device {self.device}")
 
@@ -72,6 +78,25 @@ class Agent:
         with torch.no_grad():
             obs_t = obs.unsqueeze(0).float().to(self.device) / 255.0
             return self.q_model(obs_t).argmax(dim=1).item()
+
+    def train_world_model(self, batch_size):
+
+        obs, actions, rewards, next_obs, dones = self.memory.sample_buffer(batch_size)
+
+        loss, loss_dict = self.world_model.compute_loss(obs, actions, rewards, next_obs, dones)
+
+        self.world_model_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.world_model.parameters(), max_norm=1.0)
+        self.world_model_optimizer.step()
+
+        return (
+            loss_dict['total'],
+            loss_dict['recon'],
+            loss_dict['dynamics'],
+            loss_dict['reward'],
+            loss_dict['done']
+        )
 
     
     def train_step(self, batch_size):
@@ -109,6 +134,11 @@ class Agent:
 
     def save(self):
         self.q_model.save_the_model("q_model", verbose=True)
+        self.world_model.save_the_model("world_model", verbose=True)
+
+    def save_best(self):
+        self.q_model.save_the_model("q_model_best", verbose=True)
+        self.world_model.save_the_model("world_model_best", verbose=True)
 
     def load(self):
         self.q_model.load_the_model("q_model", device=self.device)
@@ -142,7 +172,7 @@ class Agent:
 
 
 
-    def train(self, episodes=1, batch_size=32):
+    def train(self, episodes=1, batch_size=32, offline_training_epochs=1, wm_batch_size=1):
         run_tag = f'initial'
         writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_{run_tag}'
         writer = SummaryWriter(writer_name)
@@ -179,6 +209,41 @@ class Agent:
             avg_loss = episode_loss / episode_steps if episode_steps > 0 else 0.0
 
             print(f"Episode {episode} | reward: {episode_reward:.1f} | epsilon: {self.epsilon:.3f} | steps: {episode_steps}")
+
+            total_combined_loss = 0.0
+            total_reward_loss = 0.0
+            total_done_loss = 0.0
+            total_recon_loss = 0.0
+            total_dynamics_loss = 0.0
+            total_q_loss = 0.0
+            total_imagine_reward = 0.0
+            wm_updates = 0
+            q_updates = 0
+
+            for _ in range(offline_training_epochs):
+                for _ in range(5):
+                    combined_loss, reward_loss, done_loss, recon_loss, dynamics_loss = self.train_world_model(batch_size=wm_batch_size)
+                    total_combined_loss += combined_loss
+                    total_reward_loss += reward_loss
+                    total_done_loss += done_loss
+                    total_recon_loss += recon_loss
+                    total_dynamics_loss += dynamics_loss
+                    wm_updates += 1
+
+            if(wm_updates > 0):
+                avg_combined_loss = total_combined_loss / wm_updates
+                avg_reward_loss = total_reward_loss / wm_updates
+                avg_done_loss = total_done_loss / wm_updates
+                avg_recon_loss = total_recon_loss / wm_updates
+                avg_dynamics_loss = total_dynamics_loss / wm_updates
+
+                writer.add_scalar("World Model/combined_loss", avg_combined_loss, episode)
+                writer.add_scalar("World Model/reconstruction_loss", avg_recon_loss, episode)
+                writer.add_scalar("World Model/dynamics_loss", avg_dynamics_loss, episode)
+                writer.add_scalar("World Model/reward_loss", avg_reward_loss, episode)
+                writer.add_scalar("World Model/done_loss", avg_done_loss, episode)
+
+
 
             writer.add_scalar("Train/episode_reward", episode_reward, episode)
             writer.add_scalar("Train/epsilon", self.epsilon, episode)

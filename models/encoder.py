@@ -66,9 +66,9 @@ class Decoder(BaseModel):
 
         self.fc_dec = nn.Linear(embed_dim, conv_flat_size)
 
-        self.deconv1 = nn.ConvTranspose2d(conv_channels[3], conv_channels[2], kernel_size=3, stride=2, padding=1)
-        self.deconv2 = nn.ConvTranspose2d(conv_channels[2], conv_channels[1], kernel_size=3, stride=2, padding=1)
-        self.deconv3 = nn.ConvTranspose2d(conv_channels[1], conv_channels[0], kernel_size=3, stride=2, padding=1)
+        self.deconv1 = nn.ConvTranspose2d(conv_channels[3], conv_channels[2], kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv2 = nn.ConvTranspose2d(conv_channels[2], conv_channels[1], kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv3 = nn.ConvTranspose2d(conv_channels[1], conv_channels[0], kernel_size=3, stride=2, padding=1, output_padding=1)
 
     def _deconv_forward(self, x):
 
