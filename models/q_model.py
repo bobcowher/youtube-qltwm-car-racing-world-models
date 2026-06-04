@@ -6,37 +6,27 @@ from models.base import BaseModel
 
 class QModel(BaseModel):
 
-    def __init__(self, action_dim, input_shape=(3, 96, 96)):
+    def __init__(self, action_dim, hidden_dim=256, embed_dim=1024):
         super(QModel, self).__init__()
 
-        self.conv1 = nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.embed_dim = embed_dim
 
-        with torch.no_grad():
-            dummy = torch.zeros(1, *input_shape)
-            flat_size = self._conv_forward(dummy).shape[1]
+        self.fc1 = nn.Linear(embed_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
 
-        self.fc1 = nn.Linear(flat_size, 512)
-        self.output = nn.Linear(512, action_dim)
+        self.output = nn.Linear(hidden_dim, action_dim)
 
         self.apply(self._weights_init)
 
         print(f"Q-Model initialized")
-        print(f"    Input: {input_shape}")
-        print(f"    Conv features: {flat_size}")
+        print(f"    Input: {embed_dim} embeddings")
+        print(f"    Hidden: {hidden_dim}")
         print(f"    Output: {action_dim} actions")
 
 
-    def _conv_forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        return x.flatten(1)
-
-    def forward(self, obs):
-        x = self._conv_forward(obs)
-        x = F.relu(self.fc1(x))
+    def forward(self, embeddings):
+        x = F.relu(self.fc1(embeddings))
+        x = F.relu(self.fc2(x))
         return self.output(x)
 
     def _weights_init(self, m):

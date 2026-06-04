@@ -55,7 +55,7 @@ def run_imagination(steps: int = 500, warmup: int = 50, scale: int = 4, out: str
     # Video writer
     frame_size = (96 * scale, 96 * scale)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out, fourcc, 30, frame_size)
+    writer = cv2.VideoWriter(out, fourcc, fps, frame_size)
 
     window = "Imagination"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
@@ -88,8 +88,7 @@ def run_imagination(steps: int = 500, warmup: int = 50, scale: int = 4, out: str
                 print("Quit early.")
                 break
 
-            # q_model takes images (not embeds) — feed the decoded frame directly
-            action_idx = agent.q_model(frame_tensor).argmax(dim=1)  # (1,)
+            action_idx = agent.q_model(current_embed).argmax(dim=1)  # (1,)
             action_onehot = F.one_hot(action_idx, num_classes=n_actions).float()
 
             next_embed, reward, done = agent.world_model.imagine_step(current_embed, action_onehot)

@@ -3,14 +3,44 @@ from re import T
 import gymnasium as gym
 import cv2
 import torch
+from torch._C import device
+from torch.cuda import device_count
 import torch.nn.functional as F
 import random
+
+from torch.nn.utils import stateless
 from buffer import ReplayBuffer
 from models import world_model
 from models.q_model import QModel
 from models.world_model import WorldModel
 import datetime
 from torch.utils.tensorboard.writer import SummaryWriter
+
+class MixedSampler:
+
+    def __init__(self, agent, real_ratio=0.5):
+        self.agent = agent
+        self.real_ratio = real_ratio
+
+    def sample(self, batch_size, horizon):
+        if random.random() < self.real_ratio:
+            return self._sample_real(batch_size, horizon)
+        
+        return self._sample_imagined(batch_size, horizon)
+
+    def _sample_real(self, batch_size, horizon):
+
+        obs, actions, rewards, next_obs, dones = self.agent.memory.sample_buffer(batch_size * horizon)
+
+        with torch.no_grad():
+            states = self.agent.world_model.encode(self.agent.normalize_observation(obs)).squeeze(1)
+            next_states = self.agent.world_model.encode(self.agent.normalize_observation(next_obs)).squeeze(1)
+        rewards = rewards.float()
+        return states, actions, rewards, next_states, dones
+
+    def _sample_imagined(self,  batch_size, horizon):
+        return self.agent.imagine_trajectory(batch_size, horizon)
+
 
 class Agent:
 
@@ -21,6 +51,11 @@ class Agent:
         self.epsilon = 1
         self.min_epsilon = 0.1
         self.epsilon_decay = 0.98
+        
+        self.imagine_epsilon = 1
+        self.imagine_min_epsilon = 0.1
+        self.imagine_epsilon_decay = 0.99
+
 
         self.target_update_interval = target_update_interval
         self.total_steps = 0
@@ -59,9 +94,54 @@ class Agent:
 
         self.q_optimizer = torch.optim.Adam(self.q_model.parameters(), lr=0.0001)
 
+    def normalize_observation(self, obs):
+        return obs / 255.0
         
 
+    def imagine_trajectory(self, batch_size, horizon):
+        obs, _, _, _, _ = self.memory.sample_buffer(batch_size)
+        obs = self.normalize_observation(obs)
         
+        with torch.no_grad():
+            embeds = self.world_model.encode(obs).squeeze(1) # (batch_size, embed_dim)
+
+        all_states = []
+        all_actions = []
+        all_rewards = []
+        all_next_states = []
+        all_dones = []
+
+        current_embeds = embeds
+
+        for _ in range(horizon):
+
+            with torch.no_grad():
+                q_vals = self.q_model(current_embeds)
+                best_actions = q_vals.argmax(dim=1)
+                random_actions = torch.randint(0, self.env.action_space.n, (batch_size,), device=self.device)
+                exploration_mask = (torch.rand(batch_size, device=self.device) < self.imagine_epsilon).long()
+                action_idx = exploration_mask * random_actions + (1 - exploration_mask) * best_actions
+
+                action_onehot = F.one_hot(action_idx, num_classes=self.env.action_space.n).float()
+
+                next_embeds, rewards, dones = self.world_model.imagine_step(current_embeds, action_onehot)
+
+                all_states.append(current_embeds)
+                all_actions.append(action_idx)
+                all_rewards.append(rewards.squeeze(-1))
+                all_next_states.append(next_embeds)
+                all_dones.append((dones.squeeze(-1) > 0.5).float())
+
+                current_embeds = next_embeds
+
+        states = torch.cat(all_states, dim=0)
+        actions = torch.cat(all_actions, dim=0)
+        rewards = torch.cat(all_rewards, dim=0)
+        next_states = torch.cat(all_next_states, dim=0)
+        dones = torch.cat(all_dones, dim=0)
+
+        return states, actions, rewards, next_states, dones
+
 
 
     def process_observation(self, obs):
