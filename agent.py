@@ -16,8 +16,7 @@ class Agent:
 
     def __init__(self, env: gym.Env,
                        max_buffer_size: int = 20000,
-                       target_update_interval: int = 10000,
-                       world_model_batch_size: int = 8) -> None:
+                       target_update_interval: int = 10000) -> None:
         self.env = env
         self.epsilon = 1
         self.min_epsilon = 0.1
@@ -43,7 +42,6 @@ class Agent:
         self.world_model = WorldModel(observation_shape=obs.shape, embed_dim=1024, n_actions=self.env.action_space.n).to(self.device) 
 
         self.world_model_optimizer = torch.optim.Adam(self.world_model.parameters(), lr=0.0001)
-        self.world_model_batch_size = world_model_batch_size 
 
         print(f"Initializing agent on device {self.device}")
 

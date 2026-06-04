@@ -104,7 +104,7 @@ class WorldModel(BaseModel):
 
         reward_loss = F.mse_loss(reward_pred.squeeze(-1), rewards.float())
         
-        done_loss = F.mse_loss(done_pred.squeeze(-1), dones.float())
+        done_loss = F.binary_cross_entropy(done_pred.squeeze(-1), dones.float())
 
         combined_loss = (
             1.0 * recon_loss +
