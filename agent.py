@@ -82,12 +82,14 @@ class Agent:
 
         self.q_model = QModel(
             action_dim=self.env.action_space.n,
-            input_shape=obs.shape,
+            hidden_dim=256,
+            embed_dim=self.world_model.embed_dim
         ).to(self.device)
 
         self.target_q_model = QModel(
             action_dim=self.env.action_space.n,
-            input_shape=obs.shape,
+            hidden_dim=256,
+            embed_dim=self.world_model.embed_dim
         ).to(self.device)
 
         self.target_q_model.load_state_dict(self.q_model.state_dict())
@@ -155,7 +157,8 @@ class Agent:
         
         with torch.no_grad():
             obs_t = obs.unsqueeze(0).float().to(self.device) / 255.0
-            return self.q_model(obs_t).argmax(dim=1).item()
+            embed = self.world_model.encode(obs_t).squeeze(1)
+            return self.q_model(embed).argmax(dim=1).item()
 
     def train_world_model(self, batch_size):
 
@@ -177,23 +180,20 @@ class Agent:
         )
 
     
-    def train_step(self, batch_size):
+    def train_q_model_on_mixed(self, sampler, horizon, batch_size):
 
-        obs, actions, rewards, next_obs, dones = self.memory.sample_buffer(batch_size)
-
-        obs_norm = obs / 255.0
-        next_obs_norm = next_obs / 255.0
+        obs, actions, rewards, next_obs, dones = sampler.sample(batch_size, horizon)
 
         actions = actions.unsqueeze(1).long()
         rewards = rewards.unsqueeze(1)
         dones = dones.unsqueeze(1).float()
         
-        q_values = self.q_model(obs_norm)
+        q_values = self.q_model(obs)
         q_sa = q_values.gather(1, actions)
 
         with torch.no_grad():
-            next_actions = self.q_model(next_obs_norm).argmax(dim=1, keepdim=True)
-            next_q = self.target_q_model(next_obs_norm).gather(1, next_actions)
+            next_actions = self.q_model(next_obs).argmax(dim=1, keepdim=True)
+            next_q = self.target_q_model(next_obs).gather(1, next_actions)
             targets = rewards + (1 - dones) * self.gamma * next_q
 
         loss = F.mse_loss(q_sa, targets)
@@ -208,7 +208,7 @@ class Agent:
 
         self.total_steps += 1
 
-        return loss.item()
+        return loss.item(), rewards.mean().item()
 
     def save(self):
         self.q_model.save_the_model("q_model", verbose=True)
@@ -250,10 +250,17 @@ class Agent:
 
 
 
-    def train(self, episodes=1, batch_size=32, offline_training_epochs=1, wm_batch_size=1):
+    def train(self, episodes=1, batch_size=32, offline_training_epochs=1, wm_batch_size=1, imagination_steps=None, real_ratio=0.5):
+
+        rollout_steps = imagination_steps if imagination_steps is not None else batch_size
+
         run_tag = f'initial'
         writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_{run_tag}'
         writer = SummaryWriter(writer_name)
+
+        mixed_sampler = MixedSampler(self, real_ratio=real_ratio)
+
+        best_score = -1000.0
 
         for episode in range(episodes):
             obs, _ = self.env.reset()
@@ -277,16 +284,23 @@ class Agent:
                 episode_reward += float(reward)
                 episode_steps += 1
 
-                if self.memory.can_sample(batch_size):
-                    episode_loss += self.train_step(batch_size)
-
                 obs = next_obs
 
             self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
+            self.imagine_epsilon = max(self.imagine_min_epsilon, self.imagine_epsilon * self.imagine_epsilon_decay)
 
             avg_loss = episode_loss / episode_steps if episode_steps > 0 else 0.0
 
             print(f"Episode {episode} | reward: {episode_reward:.1f} | epsilon: {self.epsilon:.3f} | steps: {episode_steps}")
+
+            if episode_reward > best_score:
+                best_score = episode_reward
+                self.save_best()
+
+            current_real_ratio = max(real_ratio, 1.0 - episode / 800.0)
+            mixed_sampler.real_ratio = current_real_ratio
+
+            current_ratio = [2, 2]
 
             total_combined_loss = 0.0
             total_reward_loss = 0.0
@@ -299,7 +313,7 @@ class Agent:
             q_updates = 0
 
             for _ in range(offline_training_epochs):
-                for _ in range(5):
+                for _ in range(current_ratio[0]):
                     combined_loss, reward_loss, done_loss, recon_loss, dynamics_loss = self.train_world_model(batch_size=wm_batch_size)
                     total_combined_loss += combined_loss
                     total_reward_loss += reward_loss
@@ -307,6 +321,13 @@ class Agent:
                     total_recon_loss += recon_loss
                     total_dynamics_loss += dynamics_loss
                     wm_updates += 1
+
+                for _ in range(current_ratio[1]):
+                    q_loss, imagine_reward = self.train_q_model_on_mixed(mixed_sampler, rollout_steps, batch_size)
+                    total_q_loss += q_loss
+                    total_imagine_reward += imagine_reward
+                    q_updates += 1
+
 
             if(wm_updates > 0):
                 avg_combined_loss = total_combined_loss / wm_updates
@@ -321,11 +342,11 @@ class Agent:
                 writer.add_scalar("World Model/reward_loss", avg_reward_loss, episode)
                 writer.add_scalar("World Model/done_loss", avg_done_loss, episode)
 
-
+            episode_loss = total_q_loss / q_updates if q_updates > 0 else 0.0
 
             writer.add_scalar("Train/episode_reward", episode_reward, episode)
             writer.add_scalar("Train/epsilon", self.epsilon, episode)
-            writer.add_scalar("Train/avg_q_loss", avg_loss, episode)
+            writer.add_scalar("Train/avg_q_loss", episode_loss, episode)
 
             if episode % 10 == 0:
                 self.save()
