@@ -54,8 +54,7 @@ class WorldModel(BaseModel):
 
     def imagine_step(self, embed, action):
 
-        delta = self.dynamics(embed, action)
-        next_embed = embed + delta
+        next_embed = self.dynamics(embed, action)
         next_embed = self.normalize_embedding(next_embed)
 
         embed_action = torch.cat([embed, action], dim=-1)
@@ -73,7 +72,6 @@ class WorldModel(BaseModel):
         recon = self.decode(embeds_flat)
 
         next_embed_pred = self.dynamics(embeds_flat, action)
-        next_embed_pred = embeds_flat + next_embed_pred
         next_embed_pred = self.normalize_embedding(next_embed_pred)
 
         embed_action = torch.cat([embeds_flat, action], dim=-1)
@@ -110,7 +108,7 @@ class WorldModel(BaseModel):
 
         combined_loss = (
             1.0 * recon_loss +
-            100.0 * dynamics_loss +
+            1.0 * dynamics_loss +
             2.0 * reward_loss +
             0.5 * done_loss
         )

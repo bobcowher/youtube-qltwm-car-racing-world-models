@@ -128,13 +128,16 @@ class Agent:
 
                 next_embeds, rewards, dones = self.world_model.imagine_step(current_embeds, action_onehot)
 
+                next_frames = self.world_model.decode(next_embeds)
+                reencoded = self.world_model.encode(next_frames)
+
                 all_states.append(current_embeds)
                 all_actions.append(action_idx)
                 all_rewards.append(rewards.squeeze(-1))
-                all_next_states.append(next_embeds)
+                all_next_states.append(reencoded)
                 all_dones.append((dones.squeeze(-1) > 0.5).float())
 
-                current_embeds = next_embeds
+                current_embeds = reencoded
 
         states = torch.cat(all_states, dim=0)
         actions = torch.cat(all_actions, dim=0)
