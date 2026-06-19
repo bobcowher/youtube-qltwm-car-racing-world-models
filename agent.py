@@ -173,10 +173,10 @@ class Agent:
 
         return (
             loss_dict['total'],
-            loss_dict['recon'],
-            loss_dict['dynamics'],
             loss_dict['reward'],
-            loss_dict['done']
+            loss_dict['done'],
+            loss_dict['recon'],
+            loss_dict['dynamics']
         )
 
     
@@ -219,6 +219,7 @@ class Agent:
         self.world_model.save_the_model("world_model_best", verbose=True)
 
     def load(self):
+        self.world_model.load_the_model("world_model", device=self.device)
         self.q_model.load_the_model("q_model", device=self.device)
         self.target_q_model.load_the_model("q_model", device=self.device)
     

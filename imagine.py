@@ -95,12 +95,7 @@ def run_imagination(steps: int = 500, warmup: int = 50, scale: int = 4, out: str
 
             total_reward += reward.item()
 
-            # Decode → re-encode to stay on the encoder's distribution.
-            # dynamics was trained on encoder outputs, not its own outputs, so
-            # without this each step drifts off-manifold and the decoder collapses
-            # to a mean frame within a handful of steps.
-            next_frame = agent.world_model.decode(next_embed)
-            current_embed = agent.world_model.encode(next_frame)
+            current_embed = next_embed
 
             if done.item() > 0.5:
                 print(f"World model predicted done at step {step+1}.")
